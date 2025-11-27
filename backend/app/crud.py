@@ -1,74 +1,68 @@
-from sqlalchemy.orm import Session, aliased
-from sqlalchemy import func, desc
+from sqlalchemy import select, func, desc
+from sqlalchemy.orm import aliased
+from sqlalchemy.ext.asyncio import AsyncSession
 from .models import Submission
 from datetime import date
-from typing import Optional
 
 
-def create_submission(db: Session, date: date, first_name: str, last_name: str):
+async def create_submission(db: AsyncSession, date: date, first_name: str, last_name: str):
     db_submission = Submission(date=date, first_name=first_name, last_name=last_name)
     db.add(db_submission)
-    db.commit()
-    db.refresh(db_submission)
+    await db.commit()
+    await db.refresh(db_submission)
     return db_submission
 
 
-def get_history(
-    db: Session,
+async def get_history(
+    db: AsyncSession,
     filter_date: date,
-    first_name: Optional[str] = None,
-    last_name: Optional[str] = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
     limit: int = 10
 ):
-    # Базовый фильтр по дате
-    base_query = db.query(Submission).filter(Submission.date <= filter_date)
+    base_query = select(Submission).where(Submission.date <= filter_date)
 
     if first_name:
-        base_query = base_query.filter(Submission.first_name == first_name)
+        base_query = base_query.where(Submission.first_name == first_name)
     if last_name:
-        base_query = base_query.filter(Submission.last_name == last_name)
+        base_query = base_query.where(Submission.last_name == last_name)
 
-    # Считаем общее количество элементов после фильтра
-    total = base_query.count()
+    # total count
+    result_total = await db.execute(select(func.count()).select_from(base_query.subquery()))
+    total = result_total.scalar() or 0
 
-    # Алиас для self-join, чтобы посчитать предыдущие записи с меньшей датой
-    Sub2 = aliased(Submission)
-
-    # Подзапрос с подсчётом предыдущих записей
+    # self join to get number of previous records
+    sub_a = aliased(Submission)
     count_subq = (
-        db.query(
+        select(
             Submission.id.label("id"),
-            func.count(Sub2.id).label("count")
+            func.count(sub_a.id).label("count")
         )
         .outerjoin(
-            Sub2,
-            (Sub2.first_name == Submission.first_name) &
-            (Sub2.last_name == Submission.last_name) &
-            (Sub2.date < Submission.date)
+            sub_a,
+            (sub_a.first_name == Submission.first_name) &
+            (sub_a.last_name == Submission.last_name) &
+            (sub_a.date < Submission.date)
         )
         .group_by(Submission.id)
         .subquery()
     )
 
-    # Основной запрос: выбираем нужные поля и количество предыдущих
-    items = (
-        db.query(
+    query = (
+        select(
             Submission.date,
             Submission.first_name,
             Submission.last_name,
             count_subq.c.count
         )
         .join(count_subq, Submission.id == count_subq.c.id)
-        .order_by(
-            desc(Submission.date),
-            desc(Submission.first_name),
-            desc(Submission.last_name),
-        )
+        .order_by(desc(Submission.date), desc(Submission.first_name), desc(Submission.last_name))
         .limit(limit)
-        .all()
     )
 
-    # Преобразуем в JSON-подобный формат
+    result = await db.execute(query)
+    items = result.all()
+
     history_items = [
         {
             "date": item.date.isoformat(),
@@ -78,5 +72,4 @@ def get_history(
         }
         for item in items
     ]
-
     return {"items": history_items, "total": total}

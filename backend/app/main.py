@@ -1,46 +1,56 @@
-from fastapi import FastAPI, Depends, Request, status
-from fastapi.responses import JSONResponse
+import os
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from .crud import create_submission, get_history
 from .database import SessionLocal, engine, Base
 from .exceptions import validation_exception_handler
 from .middleware import RandomDelayMiddleware
 from .schemas import SubmissionCreate, SubmissionResponse, HistoryResponse
 from datetime import date
-from typing import Optional
+from typing import AsyncGenerator
 
 app = FastAPI()
+
+origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
+origins = [o.strip() for o in origins if o.strip()]
 
 app.exception_handler(RequestValidationError)(validation_exception_handler)
 app.add_middleware(RandomDelayMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-Base.metadata.create_all(bind=engine)
+
+# Tables creation on app start
+@app.on_event("startup")
+async def startup():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# async sessions generator
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with SessionLocal() as session:
+        yield session
 
 
 @app.post("/api/submit", response_model=SubmissionResponse)
-def submit(submission: SubmissionCreate, db: Session = Depends(get_db)):
-    create_submission(db, submission.date, submission.first_name, submission.last_name)
+async def submit(submission: SubmissionCreate, db: AsyncSession = Depends(get_db)):
+    await create_submission(db, submission.date, submission.first_name, submission.last_name)
     return {"success": True}
 
 
 @app.get("/api/history", response_model=HistoryResponse)
-def history(date: date, first_name: Optional[str] = None, last_name: Optional[str] = None,
-            db: Session = Depends(get_db)):
-    return get_history(db, date, first_name, last_name)
+async def history(
+    date: date,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    db: AsyncSession = Depends(get_db)
+):
+    return await get_history(db, date, first_name, last_name)

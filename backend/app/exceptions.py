@@ -6,7 +6,7 @@ from fastapi.exceptions import RequestValidationError
 async def validation_exception_handler(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    errors = {}
+    errors: dict[str, list[str]] = {}
     for err in exc.errors():
         field = err["loc"][-1]
         msg = err["msg"]
