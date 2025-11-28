@@ -1,4 +1,4 @@
-# MVP FastATI + React test project
+# MVP FastAPI + React test project
 ## To run:
 Clone repository on your computer:
 ```bash
