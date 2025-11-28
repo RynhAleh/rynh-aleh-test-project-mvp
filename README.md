@@ -8,6 +8,10 @@ Run:
 ```bash
 docker-compose up --build
 ```
+Clone secrets, if you don't have your own:
+```bash
+cp .env.example .env --update=none
+```
 Access frontend at http://localhost:3000 (backend at http://localhost:8000).
 Navigation supports back button via React Router.
 For testing, use curl as in the task.
